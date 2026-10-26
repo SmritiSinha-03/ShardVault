@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShardVault</title>
+    <meta name="description" content="Self-healing object storage built on MinIO erasure coding." />
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+  </head>
+  <body data-disks="{{ disk_count }}" data-max-mb="{{ max_mb }}">
+    <header class="topbar">
+      <a class="brand" href="/">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="3" y="5" width="11" height="10" rx="2" />
+          <rect x="18" y="5" width="11" height="10" rx="2" />
+          <rect x="3" y="18" width="11" height="10" rx="2" />
+          <rect x="18" y="18" width="11" height="10" rx="2" class="brand-mark-parity" />
+        </svg>
+        ShardVault
+      </a>
+      <p id="health" class="health" data-tone="wait" role="status">
+        <span class="led" aria-hidden="true"></span><span id="health-text">Connecting to MinIO</span>
+      </p>
+      <nav class="topbar-actions">
+        <button type="button" id="repair" class="btn btn-secondary">Repair now</button>
+        <a class="btn btn-quiet" href="{{ console_url }}" target="_blank" rel="noopener">MinIO console</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="headline">
+        <h1 id="headline">Four disks. Any two can fail.</h1>
+        <p id="explainer" class="lede">
+          Every file is split into data and parity pieces, one on each disk. Destroy a disk below and the files
+          still open. Then watch MinIO rebuild it.
+        </p>
+      </section>
+
+      <section class="chassis" aria-label="Disks">
+        <div id="bays" class="bays"></div>
+        <p id="usage" class="usage" hidden></p>
+      </section>
+
+      <div class="lower">
+        <section class="panel files" aria-labelledby="files-title">
+          <div class="panel-head">
+            <h2 id="files-title">Files</h2>
+            <span id="file-count" class="count"></span>
+          </div>
+
+          <label id="dropzone" class="dropzone" for="file-input">
+            <input id="file-input" type="file" multiple />
+            <span class="drop-title">Drop files here or choose files</span>
+            <span class="drop-hint">Photos work best for the demo. Up to {{ max_mb }} MB each.</span>
+          </label>
+          <p id="upload-status" class="upload-status" role="status"></p>
+
+          <ul id="file-list" class="file-list"></ul>
+          <p id="files-empty" class="empty" hidden>No files yet. Upload a photo to see it split across the disks.</p>
+          <p id="files-error" class="files-error" role="alert" hidden></p>
+        </section>
+
+        <section class="panel activity" aria-labelledby="activity-title">
+          <div class="panel-head">
+            <h2 id="activity-title">Activity</h2>
+          </div>
+          <ol id="log" class="log" aria-live="polite"></ol>
+        </section>
+      </div>
+    </main>
+
+    <dialog id="destroy-dialog" aria-labelledby="destroy-title">
+      <form method="dialog">
+        <h2 id="destroy-title">Destroy disk</h2>
+        <p id="destroy-body"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="btn btn-quiet">Keep disk</button>
+          <button value="confirm" id="destroy-confirm" class="btn btn-danger">Destroy disk</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

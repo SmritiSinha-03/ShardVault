@@ -1,0 +1,15 @@
+# Local settings (may contain passwords)
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Editors and OS
+.idea/
+.DS_Store
+Thumbs.db

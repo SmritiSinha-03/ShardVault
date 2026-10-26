@@ -1,0 +1,60 @@
+# ShardVault: MinIO with 4 disks + the dashboard.
+#
+#   docker compose up --build        start everything
+#   docker compose down              stop (files are kept)
+#   docker compose down -v           stop and delete all disks and files
+
+name: shardvault
+
+services:
+  minio:
+    # Built locally from the open-source conda-forge package (see minio/Dockerfile).
+    build: ./minio
+    # Four drives on one server form one erasure set: every object is split
+    # into 2 data + 2 parity shards, one shard per drive.
+    command: server /data1 /data2 /data3 /data4 --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-shardvault}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shardvault-secret}
+      # EC:2 = two parity shards per object, so any two drives can be lost.
+      MINIO_STORAGE_CLASS_STANDARD: EC:2
+      # Laptop mode: allow all drives on one physical disk and use a small
+      # memory pool. Remove this on real servers with separate drives.
+      MINIO_CI_CD: "1"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - disk1:/data1
+      - disk2:/data2
+      - disk3:/data3
+      - disk4:/data4
+    restart: unless-stopped
+
+  app:
+    build: ./app
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-shardvault}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-shardvault-secret}
+      BUCKET: ${BUCKET:-vault}
+      STORAGE_DIR: /storage
+      MINIO_CONSOLE_URL: http://localhost:${MINIO_CONSOLE_PORT:-9001}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    # The same four volumes, so the dashboard can show which shard sits on
+    # which disk, and can erase a disk to demonstrate a failure.
+    volumes:
+      - disk1:/storage/disk1
+      - disk2:/storage/disk2
+      - disk3:/storage/disk3
+      - disk4:/storage/disk4
+    depends_on:
+      - minio
+    restart: unless-stopped
+
+volumes:
+  disk1:
+  disk2:
+  disk3:
+  disk4:
