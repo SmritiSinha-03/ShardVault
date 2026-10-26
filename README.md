@@ -6,6 +6,7 @@
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![MinIO](https://img.shields.io/badge/MinIO-S3%20compatible-C72E49?logo=minio&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![AWS](https://img.shields.io/badge/Deployed%20on-AWS%20EC2-FF9900?logo=amazonwebservices&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ShardVault runs a private, Amazon S3-compatible storage service on four disks using [MinIO](https://min.io), and adds a live dashboard that shows exactly where every piece of every file is stored. Destroy a disk with one click, prove that every file still downloads bit-for-bit, then watch the storage rebuild the lost disk on its own.
@@ -22,6 +23,7 @@ ShardVault runs a private, Amazon S3-compatible storage service on four disks us
 - [How it works](#how-it-works)
 - [Workflows](#workflows)
 - [Getting started](#getting-started)
+- [Deployment on AWS](#deployment-on-aws)
 - [Walkthrough: break it and watch it heal](#walkthrough-break-it-and-watch-it-heal)
 - [Command-line tool](#command-line-tool)
 - [API reference](#api-reference)
@@ -36,7 +38,7 @@ ShardVault runs a private, Amazon S3-compatible storage service on four disks us
 
 Disks fail. The simple defence is to keep three full copies of everything, which survives two failures but triples the storage bill. Large storage systems such as Amazon S3, Azure Blob Storage and Google Cloud Storage use **erasure coding** instead: each object is cut into data pieces, extra parity pieces are calculated from them, and the pieces are spread across drives. Any sufficient subset of pieces can rebuild the original.
 
-ShardVault makes that idea visible and testable on a laptop. With four disks and two parity pieces per file, it survives **any two disk failures while using only 2× the space**, compared with 3× for triple copies.
+ShardVault makes that idea visible and testable on a laptop or a cloud server. With four disks and two parity pieces per file, it survives **any two disk failures while using only 2× the space**, compared with 3× for triple copies.
 
 ## Features
 
@@ -45,10 +47,10 @@ ShardVault makes that idea visible and testable on a laptop. With four disks and
 - **Live shard map.** Each disk bay lists the pieces it holds and their sizes, read directly from the drive.
 - **Failure injection.** "Destroy disk" permanently erases a disk's contents, including MinIO's drive identity, exactly like replacing a dead drive with a blank one.
 - **Integrity verification.** A SHA-256 fingerprint is recorded at upload. "Verify" reads the file back, possibly from a damaged cluster, and proves it is identical.
-- **Self-healing.** MinIO detects the blank drive and rebuilds every missing shard automatically, typically within 15 to 20 seconds. "Repair now" asks MinIO to start healing straight away.
+- **Self-healing.** MinIO detects the blank drive and rebuilds every missing shard automatically, usually within 20 seconds. A single missing piece is restored within about a second of the next read.
 - **Quorum awareness.** The dashboard shows when the cluster is fully working, read-only or unavailable, and uploads are refused safely when too few disks remain.
 - **Activity log** narrating every failure, rebuild and verification as it happens.
-- **One command to run**, no cloud account needed: everything runs in Docker on your machine.
+- **One command to run** with Docker Compose, on a laptop or on a cloud server such as AWS EC2.
 
 ## Architecture
 
@@ -82,7 +84,7 @@ Reads need 2 disks (the number of data shards). Writes need 3: when data and par
 
 ### Self-healing
 
-MinIO checks its drives every 10 seconds. A drive without MinIO's format file is treated as a freshly replaced disk: MinIO formats it, reads the surviving shards of every object from the other disks, recomputes the missing shards and writes them back. Healing also happens on access: if a read finds a shard missing, MinIO queues that object for repair. **Repair now** calls MinIO's admin heal API (the same operation as `mc admin heal --recursive`) to start healing straight away. With one disk lost this typically finishes in about a second; when two disks are lost, MinIO first reformats them on its next 10-second check, so the rebuild takes about as long as automatic healing.
+MinIO checks its drives every 10 seconds. A drive without MinIO's format file is treated as a freshly replaced disk: MinIO formats it, reads the surviving shards of every object from the other disks, recomputes the missing shards and writes them back. Healing also happens on access: if a read finds a shard missing, MinIO queues that object for repair. **Repair now** calls MinIO's admin heal API (the same operation as `mc admin heal --recursive`) to start a healing pass on demand. In the MinIO release used here, a completely wiped disk must first be re-formatted by the background check, so whole-disk recovery takes about 10 to 20 seconds either way, while an individual missing piece is restored within about a second of the next read.
 
 ### What the dashboard measures
 
@@ -147,7 +149,7 @@ sequenceDiagram
     M->>O: Read the surviving shards of each object
     M->>M: Recompute the missing shards
     M->>N: Write the rebuilt shards
-    Note over M,N: Repair now starts this immediately through the admin heal API
+    Note over M,N: Repair now starts a healing pass on demand through the admin heal API
 ```
 
 ## Getting started
@@ -162,7 +164,7 @@ sequenceDiagram
 
 ```bash
 git clone https://github.com/SmritiSinha-03/ShardVault.git
-cd shardvault
+cd ShardVault
 docker compose up --build
 ```
 
@@ -183,12 +185,52 @@ docker compose down -v     # stop and delete all four disks and every file
 
 To use different ports or credentials, copy `.env.example` to `.env` and edit it.
 
+## Deployment on AWS
+
+ShardVault runs anywhere Docker runs. It has been deployed on an **AWS EC2** instance in the Mumbai region (`ap-south-1`) using the same Docker Compose setup as local development.
+
+```mermaid
+flowchart LR
+    U[Browser, trusted IPs only] -->|HTTP :8000 dashboard<br/>:9001 MinIO console| SG[EC2 security group]
+    SG --> EC2
+    subgraph EC2[AWS EC2: Ubuntu, Docker Compose]
+        A[app container] --> M[minio container]
+        M --> V[(4 Docker volumes)]
+    end
+```
+
+**Steps in brief:**
+
+1. **Launch an EC2 instance:** Ubuntu Server (x86-64), `t3.small` (or `t3.micro` with 2 GB of swap), 20 GiB gp3 storage. A free-tier-eligible instance keeps it within AWS free credits.
+2. **Configure the security group:** allow port `8000` (dashboard) and, optionally, `9001` (MinIO Console) only from trusted IP addresses (`x.x.x.x/32`). Allow SSH from your own IP or from the EC2 Instance Connect prefix list. Never expose port `9000` publicly.
+3. **Install Docker** on the instance:
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   sudo usermod -aG docker ubuntu   # then log out and back in
+   ```
+4. **Clone, set a password and start:**
+   ```bash
+   git clone https://github.com/SmritiSinha-03/ShardVault.git
+   cd ShardVault
+   echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)" > .env
+   docker compose up -d --build
+   ```
+5. **Open** `http://<public-ip>:8000` for the dashboard and `http://<public-ip>:9001` for the MinIO Console (user `shardvault`, password from `cat .env`).
+
+**Operating notes:**
+
+- Update the deployment after pushing changes: `git pull && docker compose up -d --build`.
+- The containers restart automatically when the instance reboots.
+- The public IP changes if the instance is stopped and started again.
+- The dashboard's **MinIO console** button points to `localhost`; on a server, open `http://<public-ip>:9001` directly.
+- The dashboard has no login, so access is restricted with security group rules. Terminate the instance when it is no longer needed to avoid using credits.
+
 ## Walkthrough: break it and watch it heal
 
 1. **Upload a few photos.** Drag them onto the Files panel. Each disk bay now lists one piece of each photo, each half the photo's size.
 2. **Destroy a disk.** Click **Destroy** on Disk 3 and confirm. Its LED turns red and the bay is empty: the data is really gone from that volume.
 3. **Prove nothing was lost.** Click **Verify** on a photo. It is read back from the three remaining disks and its SHA-256 matches the original. Its thumbnail still loads, and **Download** still works.
-4. **Watch it heal.** Within 15 to 20 seconds MinIO detects the blank drive, the LED turns amber while it rebuilds, then green. Every piece reappears and the activity log reports how long it took.
+4. **Watch it heal.** Usually within 20 seconds MinIO detects the blank drive, the LED turns amber while it rebuilds, then green. Every piece reappears and the activity log reports how long it took.
 5. **Push it further.** Destroy two disks at once. Files still download, but new uploads are refused with a clear message because writing safely needs three disks. Click **Repair now** to bring everything back.
 6. **Find the limit.** Destroy three disks: the data becomes unavailable, which is exactly the boundary that two parity shards provide.
 
@@ -218,7 +260,7 @@ docker compose exec app find /storage/disk1/vault
 | `POST` | `/api/files/{key}/verify` | Re-read the file and compare its SHA-256 with the stored one |
 | `DELETE` | `/api/files/{key}` | Delete a file from every disk |
 | `POST` | `/api/disks/{n}/destroy` | Erase everything on disk `n` (1 to 4) |
-| `POST` | `/api/repair` | Start MinIO healing on every disk immediately |
+| `POST` | `/api/repair` | Start a MinIO healing pass on every disk |
 | `GET` | `/healthz` | Liveness check |
 
 Errors are JSON, for example `{"error": "unavailable", "message": "Not enough healthy disks to store new files safely. Downloads still work."}` with HTTP 503.
@@ -280,7 +322,7 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lin
 ## Project structure
 
 ```
-shardvault/
+ShardVault/
 ├── minio/
 │   └── Dockerfile           MinIO server image built from conda-forge
 ├── app/
@@ -316,6 +358,7 @@ shardvault/
 | Dashboard stays on "Connecting to MinIO" | MinIO is still starting. Check `docker compose logs minio`. |
 | A disk stays on "Rebuilding" | Click **Repair now**. |
 | Uploads are refused | Fewer than three disks are healthy. Click **Repair now** or wait for automatic healing. |
+| Deployed page does not load | Make sure the URL starts with `http://` and that your current IP is allowed in the EC2 security group. |
 | Start completely fresh | `docker compose down -v`, then `docker compose up --build`. |
 
 ## Production notes and limitations
@@ -324,6 +367,7 @@ ShardVault is a demonstration and learning tool. Before using these ideas for re
 
 - **Separate physical drives and servers.** All four "disks" here share one physical disk and one machine, so they protect against drive-level failures only. `MINIO_CI_CD` relaxes MinIO's checks for this laptop setup and must not be used on real servers. Production MinIO spreads drives across several servers.
 - **Credentials.** The app uses the MinIO root account for simplicity. A real deployment would give it a dedicated user with a minimal policy and enable TLS.
+- **Access control.** The dashboard has no login; when deployed, restrict access with firewall or security group rules.
 - **Failure injection is destructive by design.** The app mounts the disks with write access so it can erase them.
 - **Single bucket, files up to 100 MB** through the dashboard.
 
